@@ -1,5 +1,6 @@
 import { createWorkBuddyCloud } from '@tencent-ai/workbuddy-cloud-sdk';
 import { publicConfig } from './cloudConfig';
+import { activeBackend } from './remoteConfig';
 import type { StorageMode } from '../types';
 
 export const cloud = createWorkBuddyCloud({
@@ -34,6 +35,27 @@ async function resolveModel(): Promise<string> {
     return model.id;
 }
 
+// 通过本站服务端接口估算（Vercel 等外部域名使用）。
+async function aiEstimateViaProxy(name: string, storage: StorageMode, todayStr: string): Promise<AiEstimate> {
+    let res: Response;
+    try {
+        res = await fetch('/api/ai', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, storage, today: todayStr }),
+            signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS + 15000),
+        });
+    } catch (e) {
+        if ((e as Error).name === 'TimeoutError' || (e as Error).name === 'AbortError') {
+            throw new Error('AI 估算超时，请重试一次或手动填写日期。');
+        }
+        throw new Error('无法连接 AI 估算服务，请检查网络后重试。');
+    }
+    const payload = await res.json().catch(() => ({} as Record<string, unknown>));
+    if (!res.ok) throw new Error((payload as { error?: string }).error || 'AI 估算暂时失败，请重试或手动填写日期。');
+    return parseAiAnswer(JSON.stringify(payload));
+}
+
 export interface AiEstimate { minDays: number; maxDays: number; note: string; }
 
 const storageText: Record<StorageMode, string> = { room: '常温阴凉处', fridge: '冷藏（0—4°C）', freezer: '冷冻（−18°C）' };
@@ -54,6 +76,8 @@ function parseAiAnswer(answer: string): AiEstimate {
 // AI 兜底估算：仅用于参考表没有覆盖的食品。已知食品仍以参考表为准。
 export async function aiEstimateExpiry(name: string, storage: StorageMode, todayStr: string): Promise<AiEstimate> {
     if (!name.trim()) throw new Error('请先填写食品名称。');
+    // 外部域名（如 Vercel）走本站服务端代理，绕开云服务的来源域名校验。
+    if (activeBackend() === 'proxy') return aiEstimateViaProxy(name.trim(), storage, todayStr);
     const model = await resolveModel();
     let answer = '';
     try {

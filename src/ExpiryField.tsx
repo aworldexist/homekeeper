@@ -17,6 +17,7 @@ export default function ExpiryField({draft,onChange,label='到期日期',compact
     if(open){try{result=estimateExpiry(draft,storage,new Date(),{profileId:profile?.id,basisDate});}catch(e){error=(e as Error).message;}}
     const food=['食品','饮料','调味品'].includes(draft.category);
     // AI 兜底：参考表没有该物品的匹配即可用；未选储存方式时默认按常温估算并在结果中注明。
+    // 云服务只对分配域名开放，因此在其他域名（如 Vercel）上不显示该入口，避免点了必然报错。
     const aiAvailable=food&&profiles.length===0;
     async function runAiEstimate(){
         if(aiBusy)return;
